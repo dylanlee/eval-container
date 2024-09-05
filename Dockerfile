@@ -6,7 +6,7 @@ RUN apt update
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH \
-    RUST_VERSION=1.77.0
+    RUST_VERSION=1.81.0
 
 # == node ======================
 FROM base AS node
@@ -75,6 +75,7 @@ RUN set -eux; \
     ./rustup-init -y --no-modify-path --profile minimal --default-toolchain $RUST_VERSION --default-host ${rustArch}; \
     rm rustup-init; \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME;
+
 # Install cargo-binstall, which looks for precompiled binaries of libraries instead of building them here
 RUN set -eux; \
     dpkgArch="$(dpkg --print-architecture)"; \
@@ -86,10 +87,24 @@ RUN set -eux; \
     url="https://github.com/cargo-bins/cargo-binstall/releases/download/v1.6.4/cargo-binstall-${binstallArch}.tgz"; \
     curl -L --proto '=https' --tlsv1.2 -sSf "$url" | tar -xvzf -; \
     ./cargo-binstall -y --force cargo-binstall
+
 # rust-script is what Framework uses to run Rust data loaders
 RUN cargo binstall -y --force rust-script
+
 # all the apache arrow-tools
 RUN cargo binstall -y --force csv2arrow csv2parquet json2arrow json2parquet 
+
+RUN set -eux; \
+    apt install -y --no-install-recommends \
+    gdal-bin libgdal-dev python3-gdal
+
+# Clone and build stac-rs
+RUN git clone https://github.com/stac-utils/stac-rs.git && \
+    cd stac-rs && \
+    cargo build --release --features axum
+
+# Add the stac-rs binary to the PATH
+ENV PATH="/stac-rs/target/release:${PATH}"
 
 # == general-cli =================
 FROM base AS general-cli
