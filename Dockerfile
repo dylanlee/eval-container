@@ -46,8 +46,9 @@ RUN cd $(mktemp -d); \
     unzip duckdb_cli-linux-${duckdbArch}.zip; \
     install -m 0755 duckdb /usr/bin/duckdb;
 
-# == rust and python ========================
-FROM base AS rust_python
+# == python ========================
+FROM base AS python
+
 # Install Python
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 \
@@ -58,6 +59,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3-venv \
       libpython3-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# == rust ========================
+FROM base AS rust
 
 # Install Rust
 RUN set -eux; \
@@ -124,7 +128,8 @@ COPY --from=general-cli / /
 COPY --from=node / /
 COPY --from=r / /
 COPY --from=duckdb / /
-COPY --from=rust_python / /
+COPY --from=python / /
+COPY --from=rust / /
 
 # Create mounting directories
 RUN mkdir -p /viz-metrics /static-cat
