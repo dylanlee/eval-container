@@ -20,17 +20,6 @@ RUN --mount=type=cache,target=/var/cache/apt,id=framework-runtime-node \
     && npm install --global yarn
 RUN npm install --global svgo
 
-# == python ======================
-FROM base AS python
-RUN --mount=type=cache,target=/var/cache/apt,id=framework-runtime-python \
-    apt install -y --no-install-recommends \
-      python3 \
-      python3-pip \
-      python3-setuptools \
-      python3-wheel \
-      python3-dev \
-      python3-venv
-
 # == R ===========================
 FROM base AS r
 COPY r-project.gpg /etc/apt/keyrings/r-project.gpg
@@ -57,10 +46,20 @@ RUN cd $(mktemp -d); \
     unzip duckdb_cli-linux-${duckdbArch}.zip; \
     install -m 0755 duckdb /usr/bin/duckdb;
 
-# == rust ========================
-FROM base AS rust
-# Based on https://github.com/rust-lang/docker-rust/blob/c8d1e4f5c563dacb16b2aadf827f1be3ff3ac25b/1.77.0/bookworm/Dockerfile
-# Install rustup, and then use that to install Rust
+# == rust and python ========================
+FROM base AS rust_python
+# Install Python
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 \
+      python3-pip \
+      python3-setuptools \
+      python3-wheel \
+      python3-dev \
+      python3-venv \
+      libpython3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust
 RUN set -eux; \
     dpkgArch="$(dpkg --print-architecture)"; \
     case "${dpkgArch##*-}" in \
@@ -76,7 +75,7 @@ RUN set -eux; \
     rm rustup-init; \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME;
 
-# Install cargo-binstall, which looks for precompiled binaries of libraries instead of building them here
+# Install cargo-binstall
 RUN set -eux; \
     dpkgArch="$(dpkg --print-architecture)"; \
     case "${dpkgArch##*-}" in \
@@ -88,23 +87,16 @@ RUN set -eux; \
     curl -L --proto '=https' --tlsv1.2 -sSf "$url" | tar -xvzf -; \
     ./cargo-binstall -y --force cargo-binstall
 
-# rust-script is what Framework uses to run Rust data loaders
-RUN cargo binstall -y --force rust-script
+# Install rust-script and apache arrow-tools
+RUN cargo binstall -y --force rust-script csv2arrow csv2parquet json2arrow json2parquet
 
-# all the apache arrow-tools
-RUN cargo binstall -y --force csv2arrow csv2parquet json2arrow json2parquet 
+# Install GDAL
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gdal-bin libgdal-dev python3-gdal \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN set -eux; \
-    apt install -y --no-install-recommends \
-    gdal-bin libgdal-dev python3-gdal
-
-# Clone and build stac-rs
-RUN git clone https://github.com/stac-utils/stac-rs.git && \
-    cd stac-rs && \
-    cargo build --release --features axum
-
-# Add the stac-rs binary to the PATH
-ENV PATH="/stac-rs/target/release:${PATH}"
+# install stac-rs
+RUN cargo binstall -y --force stac-cli
 
 # == general-cli =================
 FROM base AS general-cli
@@ -128,9 +120,35 @@ RUN --mount=type=cache,target=/var/cache/apt,id=framework-runtime-general-cli \
 
 # == runtime =====================
 FROM base AS runtime
-COPY --from=general-cli . .
-COPY --from=node . .
-COPY --from=python . .
-COPY --from=r . .
-COPY --from=duckdb . .
-COPY --from=rust . .
+COPY --from=general-cli / /
+COPY --from=node / /
+COPY --from=r / /
+COPY --from=duckdb / /
+COPY --from=rust_python / /
+
+# Create mounting directories
+RUN mkdir -p /viz-metrics /static-cat
+
+# Clone stac-browser
+RUN git clone https://github.com/radiantearth/stac-browser.git /stac-browser
+
+# Build stac-browser
+RUN cd /stac-browser && \
+    npm install && \
+    npm run build
+
+# Install http-server
+RUN npm install --global http-server
+
+# make sure that cargo bin can be seen from non interactive shell
+RUN echo 'export PATH=/usr/local/cargo/bin:$PATH' >> /root/.bashrc
+
+# Create alias for running servers
+RUN echo 'alias eval-servers="cd /viz-metrics && npm run dev -- --host 0.0.0.0 & cd /static-cat && xargs -a loadlist.txt stacrs serve --addr 0.0.0.0:7822 & python3 -m http.server 8000 --bind 0.0.0.0 --directory /static-cat & cd /stac-browser/dist && http-server -p 8080 --host 0.0.0.0 --cors & wait"' >> /root/.bashrc
+
+# Make sure the alias is available in non-interactive shells
+RUN echo 'shopt -s expand_aliases' >> /root/.bashrc
+RUN echo 'source /root/.bashrc' >> /root/.profile
+
+# Set the default command to use a login shell, which will load .profile
+CMD ["/bin/bash", "-l"]
