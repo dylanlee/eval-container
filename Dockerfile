@@ -94,14 +94,6 @@ RUN set -eux; \
 # Install rust-script and apache arrow-tools
 RUN cargo binstall -y --force rust-script csv2arrow csv2parquet json2arrow json2parquet
 
-# Install GDAL
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gdal-bin libgdal-dev python3-gdal \
-    && rm -rf /var/lib/apt/lists/*
-
-# install stac-rs
-RUN cargo binstall -y --force stac-cli
-
 # == general-cli =================
 FROM base AS general-cli
 RUN --mount=type=cache,target=/var/cache/apt,id=framework-runtime-general-cli \
@@ -149,7 +141,7 @@ RUN npm install --global http-server
 RUN echo 'export PATH=/usr/local/cargo/bin:$PATH' >> /root/.bashrc
 
 # Create alias for running servers
-RUN echo 'alias eval-servers="cd /viz-metrics && npm run dev -- --host 0.0.0.0 & cd /static-cat && xargs -a loadlist.txt stacrs serve --addr 0.0.0.0:7822 & python3 -m http.server 8000 --bind 0.0.0.0 --directory /static-cat & cd /stac-browser/dist && http-server -p 8080 --host 0.0.0.0 --cors & wait"' >> /root/.bashrc
+RUN echo 'alias eval-servers="cd /viz-metrics && npm run dev -- --host 0.0.0.0 & python3 -m http.server 8000 --bind 0.0.0.0 --directory /static-cat & cd /stac-browser/dist && http-server -p 8080 --host 0.0.0.0 --cors & wait"' >> /root/.bashrc
 
 # Make sure the alias is available in non-interactive shells
 RUN echo 'shopt -s expand_aliases' >> /root/.bashrc
